@@ -114,7 +114,8 @@ async def cors_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def request_metrics_middleware(request: Request, call_next):
-    request_id = str(uuid.uuid4())
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
     start = time.time()
     response = await call_next(request)
     elapsed = time.time() - start
@@ -502,7 +503,7 @@ async def list_orders(
 
 @app.get("/ping")
 async def ping(request: Request):
-    req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    req_id = getattr(request.state, "request_id", str(uuid.uuid4()))
     return {"email": EMAIL, "request_id": req_id}
 
 
