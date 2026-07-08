@@ -505,8 +505,6 @@ async def healthz():
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     headers = getattr(exc, "headers", None) or {}
-    if exc.status_code == 401:
-        return JSONResponse(status_code=401, content={"valid": False}, headers=headers)
     return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=headers)
 
 
