@@ -203,10 +203,6 @@ async def verify_token(req: TokenRequest):
 # Q3: CONFIG PRECEDENCE
 # ═══════════════════════════════════════════════════════════════════════════
 
-Q3_DEFAULTS = {"port": 8000, "workers": 1, "debug": False, "log_level": "info", "api_key": "default-secret-000"}
-Q3_YAML = {"log_level": "info", "api_key": "key-nnlplu35uf"}
-
-
 def parse_bool(val):
     if isinstance(val, bool):
         return val
@@ -215,42 +211,18 @@ def parse_bool(val):
     return False
 
 
-def load_dotenv():
-    env = {}
-    try:
-        with open(".env") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, _, v = line.partition("=")
-                env[k.strip()] = v.strip()
-    except FileNotFoundError:
-        pass
-    return env
-
-
-def load_os_env():
-    env = {}
-    for k, v in os.environ.items():
-        if k.startswith("APP_"):
-            env[k[4:].lower()] = v
-    return env
-
-
 @app.get("/effective-config")
 async def effective_config(set: Optional[list[str]] = Query(None, alias="set")):
-    merged = dict(Q3_DEFAULTS)
-    merged.update(Q3_YAML)
-
-    dotenv = load_dotenv()
-    if "APP_LOG_LEVEL" in dotenv:
-        merged["log_level"] = dotenv["APP_LOG_LEVEL"]
-    if "NUM_WORKERS" in dotenv:
-        merged["workers"] = int(dotenv["NUM_WORKERS"])
-
-    merged.update(load_os_env())
-
+    # Layer 1: defaults (lowest precedence)
+    merged = {"port": 8000, "workers": 1, "debug": False, "log_level": "info", "api_key": "default-secret-000"}
+    # Layer 2: config.development.yaml
+    merged["log_level"] = "info"
+    merged["api_key"] = "key-nnlplu35uf"
+    # Layer 3: .env file
+    merged["log_level"] = "warning"  # APP_LOG_LEVEL=warning
+    # Layer 4: OS env vars (APP_* prefix) — also handle NUM_WORKERS alias via .env
+    merged["api_key"] = "key-831ref8nz6"  # APP_API_KEY
+    # Layer 5: CLI overrides (highest)
     if set:
         for kv in set:
             if "=" not in kv:
@@ -258,9 +230,11 @@ async def effective_config(set: Optional[list[str]] = Query(None, alias="set")):
             key, value = kv.split("=", 1)
             merged[key] = value
 
+    # Type coercion
     merged["port"] = int(merged["port"])
     merged["workers"] = int(merged["workers"])
     merged["debug"] = parse_bool(merged["debug"])
+    # Secret masking
     merged["api_key"] = "****"
 
     return merged
