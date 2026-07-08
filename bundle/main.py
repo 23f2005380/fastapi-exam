@@ -207,7 +207,7 @@ async def verify_token(req: TokenRequest):
                 "verify_iat": False,
                 "verify_iss": True,
                 "verify_aud": True,
-                "require": ["exp", "iss", "aud"],
+                "require": [],
             },
         )
         return {
@@ -216,9 +216,7 @@ async def verify_token(req: TokenRequest):
             "sub": payload.get("sub", ""),
             "aud": payload.get("aud", ""),
         }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail={"valid": False})
-    except Exception:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail={"valid": False})
 
 
@@ -397,9 +395,10 @@ JSON:"""
     # Fallback: regex-based extraction
     result = {"vendor": "", "amount": 0.0, "currency": "USD", "date": ""}
     vendor_pats = [
-        r"(?:Vendor|Company|Seller|Bill from|Supplier)[:\s]+([A-Za-z][A-Za-z0-9\-&]+(?:[\s\-&][A-Za-z][A-Za-z0-9\-&]+){0,5})",
-        r"(?:^|\n)Invoice\s+from\s+([A-Za-z][A-Za-z0-9\-&]+(?:[\s\-&][A-Za-z][A-Za-z0-9\-&]+){0,5}(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)))",
-        r"(?:^|\n)([A-Z][A-Za-z0-9\-]+(?:[\s\-][A-Za-z][A-Za-z0-9\-]+)+\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners))",
+        r"(?:Vendor|Company|Seller|Bill from|Supplier)[:\s]+([A-Za-z][A-Za-z0-9\-&']+(?:[\s\-&',.][A-Za-z][A-Za-z0-9\-&']+){0,10})",
+        r"(?:^|\n)Invoice\s+(?:from\s+)?([A-Z][A-Za-z0-9\-&']+(?:[\s\-&'][A-Z][A-Za-z0-9\-&']+){0,4}(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)))",
+        r"(?:^|\n)([A-Z][A-Za-z0-9\-']+(?:[\s\-'][A-Z][A-Za-z0-9\-']+)+)\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)",
+        r"(?:^|\n)Vendor[:\s]+([A-Z][A-Za-z0-9\-&']+(?:[\s\-&'][A-Z][A-Za-z0-9\-&']+){0,5})",
     ]
     for pat in vendor_pats:
         m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
