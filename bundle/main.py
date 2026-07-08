@@ -395,10 +395,12 @@ JSON:"""
     # Fallback: regex-based extraction
     result = {"vendor": "", "amount": 0.0, "currency": "USD", "date": ""}
     vendor_pats = [
-        r"(?:Vendor|Company|Seller|Bill from|Supplier)[:\s]+([A-Za-z][A-Za-z0-9\-&']+(?:[\s\-&',.][A-Za-z][A-Za-z0-9\-&']+){0,10})",
-        r"(?:^|\n)Invoice\s+(?:from\s+)?([A-Z][A-Za-z0-9\-&']+(?:[\s\-&'][A-Z][A-Za-z0-9\-&']+){0,4}(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)))",
-        r"(?:^|\n)([A-Z][A-Za-z0-9\-']+(?:[\s\-'][A-Z][A-Za-z0-9\-']+)+)\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)",
-        r"(?:^|\n)Vendor[:\s]+([A-Z][A-Za-z0-9\-&']+(?:[\s\-&'][A-Z][A-Za-z0-9\-&']+){0,5})",
+        r"(?:Vendor|Company|Seller|Bill from|Supplier|From)[:\s]+([A-Za-z][A-Za-z0-9\-&']+(?:[\s\-&',.][A-Za-z][A-Za-z0-9\-&']+){0,10})",
+        r"(?:^|\n)(?:INVOICE|Invoice)\s+(?:#|No|:)?\s*\d*\s+([A-Z][A-Za-z0-9\-]+(?:[\s\-][A-Za-z0-9\-]+){0,4}(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries))?)",
+        r"(?:^|\n)Invoice\s+(?:from\s+)?([A-Z][A-Za-z0-9\-]+(?:[\s\-][A-Za-z0-9\-]+){1,5})",
+        r"(?:^|\n)([A-Z][a-z]+(?:[\s\-][A-Z]?[A-Za-z0-9\-]+)+\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners))",
+        r"(?:^|\n)([A-Z][A-Za-z0-9]+\-[A-Z0-9]{4,})",
+        r"(?:^|\n)([A-Z][a-z]+(?:[\s\-][A-Z][a-z]+){1,4})(?:\s*\||\s*,|\s+Invoice|\s+\d)",
     ]
     for pat in vendor_pats:
         m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
