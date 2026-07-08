@@ -82,6 +82,7 @@ async def cors_middleware(request: Request, call_next):
                 resp.headers["Access-Control-Allow-Origin"] = origin
                 resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
                 resp.headers["Access-Control-Allow-Headers"] = "*"
+                resp.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
                 return resp
             return JSONResponse(content=None, status_code=204)
         else:
@@ -103,6 +104,7 @@ async def cors_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
+            response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
