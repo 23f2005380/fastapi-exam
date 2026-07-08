@@ -186,6 +186,7 @@ async def verify_token(req: TokenRequest):
             issuer=Q2_ISSUER,
             audience=Q2_AUDIENCE,
             leeway=30,
+            options={"verify_iat": False},
         )
         return {
             "valid": True,
@@ -194,9 +195,15 @@ async def verify_token(req: TokenRequest):
             "aud": payload.get("aud", ""),
         }
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail="Expired")
+    except jwt.InvalidAudienceError:
+        raise HTTPException(status_code=401, detail="Bad audience")
+    except jwt.InvalidIssuerError:
+        raise HTTPException(status_code=401, detail="Bad issuer")
+    except jwt.ImmatureSignatureError:
+        raise HTTPException(status_code=401, detail="Immature nbf")
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"JWT error: {type(e).__name__}: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -498,11 +505,9 @@ async def healthz():
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
     headers = getattr(exc, "headers", None) or {}
-    body = exc.detail
-    # Q2 returns plain {"valid": False}
-    if body == "Unauthorized":
-        return JSONResponse(status_code=exc.status_code, content={"valid": False}, headers=headers)
-    return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
+    if exc.status_code == 401:
+        return JSONResponse(status_code=401, content={"valid": False}, headers=headers)
+    return JSONResponse(status_code=exc.status_code, content=exc.detail, headers=headers)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
