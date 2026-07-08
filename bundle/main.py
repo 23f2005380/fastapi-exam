@@ -63,31 +63,46 @@ q10_rate_store = {}
 
 @app.middleware("http")
 async def cors_middleware(request: Request, call_next):
-    response = await call_next(request)
     origin = request.headers.get("origin", "")
     path = request.url.path
 
+    # Handle preflight OPTIONS for permissive routes early
+    if request.method == "OPTIONS":
+        if path.startswith("/stats"):
+            if origin == Q1_ALLOWED_ORIGIN:
+                resp = JSONResponse(content=None, status_code=204)
+                resp.headers["Access-Control-Allow-Origin"] = Q1_ALLOWED_ORIGIN
+                resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = "*"
+                return resp
+            return JSONResponse(content=None, status_code=204)
+        elif path.startswith("/ping"):
+            if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN):
+                resp = JSONResponse(content=None, status_code=204)
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = "*"
+                return resp
+            return JSONResponse(content=None, status_code=204)
+        else:
+            resp = JSONResponse(content=None, status_code=204)
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+            resp.headers["Access-Control-Allow-Headers"] = "*"
+            return resp
+
+    response = await call_next(request)
     if path.startswith("/stats"):
         if origin == Q1_ALLOWED_ORIGIN:
             response.headers["Access-Control-Allow-Origin"] = Q1_ALLOWED_ORIGIN
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
-        elif request.method == "OPTIONS":
-            # Preflight from non-allowed origin — no ACAO header
-            pass
-        else:
-            # Non-preflight from non-allowed origin — no ACAO
-            pass
-        # Don't add ACAO for non-allowed origins
     elif path.startswith("/ping"):
         if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
-        elif request.method == "OPTIONS":
-            pass  # no ACAO for non-allowed origins
     else:
-        # Permissive CORS for all other endpoints
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
         response.headers["Access-Control-Allow-Headers"] = "*"
