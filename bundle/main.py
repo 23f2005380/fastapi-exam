@@ -51,7 +51,7 @@ rate_store = {}
 
 # ─── Q10: Middleware Stack ─────────────────────────────────────────────────
 Q10_ALLOWED_ORIGIN = "https://app-2q4m9q.example.com"
-EXAM_ORIGIN = "https://dash-9ftzez.example.com"
+EXAM_ORIGIN = "https://exam.sanand.workers.dev"
 Q10_RATE_LIMIT = 15
 q10_rate_store = {}
 
