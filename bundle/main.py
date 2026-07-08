@@ -100,11 +100,10 @@ async def cors_middleware(request: Request, call_next):
             response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
             response.headers["Access-Control-Allow-Headers"] = "*"
     elif path.startswith("/ping"):
-        if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN):
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-            response.headers["Access-Control-Allow-Headers"] = "*"
-            response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
+        response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
     else:
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
@@ -152,11 +151,18 @@ async def q10_rate_limit_middleware(request: Request, call_next):
         q10_rate_store.setdefault(client_id, [])
         q10_rate_store[client_id] = [t for t in q10_rate_store[client_id] if now - t < 10]
         if len(q10_rate_store[client_id]) >= Q10_RATE_LIMIT:
-            return JSONResponse(
+            origin = request.headers.get("origin", "")
+            resp = JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded"},
-                headers={"Retry-After": "10", "Access-Control-Allow-Origin": Q10_ALLOWED_ORIGIN},
+                headers={
+                    "Access-Control-Allow-Origin": origin if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN) else "",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS",
+                    "Access-Control-Allow-Headers": "*",
+                    "Access-Control-Expose-Headers": "X-Request-ID",
+                },
             )
+            return resp
         q10_rate_store[client_id].append(now)
     return await call_next(request)
 
