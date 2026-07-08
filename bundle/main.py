@@ -89,6 +89,7 @@ async def cors_middleware(request: Request, call_next):
             resp.headers["Access-Control-Allow-Origin"] = "*"
             resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
             resp.headers["Access-Control-Allow-Headers"] = "*"
+            resp.headers["Access-Control-Expose-Headers"] = "Retry-After, X-Request-ID, X-Process-Time"
             return resp
 
     response = await call_next(request)
@@ -106,6 +107,7 @@ async def cors_middleware(request: Request, call_next):
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
         response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Expose-Headers"] = "Retry-After, X-Request-ID, X-Process-Time"
 
     return response
 
