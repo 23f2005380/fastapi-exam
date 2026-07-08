@@ -194,47 +194,31 @@ class TokenRequest(BaseModel):
 @app.post("/verify")
 async def verify_token(req: TokenRequest):
     try:
-        # Manually verify each aspect to avoid PyJWT options quirks
-        import time as _time
-
-        # Decode without verification first to get claims
-        unverified = jwt.decode(
-            req.token,
-            options={"verify_signature": False},
-        )
-
-        # Check issuer
-        if unverified.get("iss") != Q2_ISSUER:
-            raise HTTPException(status_code=401, detail={"valid": False})
-
-        # Check audience
-        token_aud = unverified.get("aud")
-        if isinstance(token_aud, list):
-            if Q2_AUDIENCE not in token_aud:
-                raise HTTPException(status_code=401, detail={"valid": False})
-        elif token_aud != Q2_AUDIENCE:
-            raise HTTPException(status_code=401, detail={"valid": False})
-
-        # Check expiry
-        if unverified.get("exp", 0) < _time.time() - 30:
-            raise HTTPException(status_code=401, detail={"valid": False})
-
-        # Now verify signature using the public key
         payload = jwt.decode(
             req.token,
             Q2_PUBLIC_KEY,
             algorithms=["RS256"],
+            issuer=Q2_ISSUER,
+            audience=Q2_AUDIENCE,
+            options={
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_nbf": False,
+                "verify_iat": False,
+                "verify_iss": True,
+                "verify_aud": True,
+                "require": ["exp", "iss", "aud"],
+            },
         )
-
         return {
             "valid": True,
             "email": payload.get("email", ""),
             "sub": payload.get("sub", ""),
             "aud": payload.get("aud", ""),
         }
-    except HTTPException:
-        raise
-    except jwt.PyJWTError:
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail={"valid": False})
+    except Exception:
         raise HTTPException(status_code=401, detail={"valid": False})
 
 
@@ -413,8 +397,9 @@ JSON:"""
     # Fallback: regex-based extraction
     result = {"vendor": "", "amount": 0.0, "currency": "USD", "date": ""}
     vendor_pats = [
-        r"(?:Vendor|Company|Seller|Bill from|Supplier)[:\s]+([A-Za-z]\w+(?:[\s\-][A-Za-z]\w+){0,5})",
-        r"(?:^|\n)([A-Z][A-Za-z0-9]+(?:[\s\-][A-Za-z0-9]+)+(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)))",
+        r"(?:Vendor|Company|Seller|Bill from|Supplier)[:\s]+([A-Za-z][A-Za-z0-9\-&]+(?:[\s\-&][A-Za-z][A-Za-z0-9\-&]+){0,5})",
+        r"(?:^|\n)Invoice\s+from\s+([A-Za-z][A-Za-z0-9\-&]+(?:[\s\-&][A-Za-z][A-Za-z0-9\-&]+){0,5}(?:\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners)))",
+        r"(?:^|\n)([A-Z][A-Za-z0-9\-]+(?:[\s\-][A-Za-z][A-Za-z0-9\-]+)+\s+(?:Inc|Corp|Ltd|LLC|GmbH|Industries|Company|Partners))",
     ]
     for pat in vendor_pats:
         m = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
