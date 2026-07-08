@@ -185,7 +185,7 @@ async def verify_token(req: TokenRequest):
             algorithms=["RS256"],
             issuer=Q2_ISSUER,
             audience=Q2_AUDIENCE,
-            options={"verify_signature": True, "verify_exp": True, "require": ["exp", "iss", "aud"]},
+            leeway=30,
         )
         return {
             "valid": True,
@@ -195,7 +195,7 @@ async def verify_token(req: TokenRequest):
         }
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    except (jwt.InvalidAudienceError, jwt.InvalidIssuerError, jwt.PyJWTError):
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
