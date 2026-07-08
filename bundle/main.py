@@ -467,7 +467,7 @@ async def create_order(request: Request, idempotency_key: Optional[str] = Header
     rate_store.setdefault(client_id, [])
     rate_store[client_id] = [t for t in rate_store[client_id] if now - t < 10]
     if len(rate_store[client_id]) >= Q9_RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers={"Retry-After": "10"})
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}, headers={"Retry-After": "10"})
     rate_store[client_id].append(now)
     if idempotency_key in idempotency_store:
         return {"id": idempotency_store[idempotency_key]}
@@ -487,7 +487,7 @@ async def list_orders(
     rate_store.setdefault(client_id, [])
     rate_store[client_id] = [t for t in rate_store[client_id] if now - t < 10]
     if len(rate_store[client_id]) >= Q9_RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers={"Retry-After": "10"})
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"}, headers={"Retry-After": "10"})
     rate_store[client_id].append(now)
     start_id = int(cursor) if cursor and cursor.isdigit() else 1
     end_id = min(start_id + limit - 1, TOTAL_ORDERS)
