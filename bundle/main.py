@@ -566,7 +566,7 @@ def extract_field(text: str, name: str, t: str):
             elif any(x in nl for x in ("item","product","service")): pats = [r"(?:\d+\s+)([a-z]+)"]
             elif any(x in nl for x in ("root_cause","root cause","reason")): pats = [r"(?:Root cause|Reason)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
             elif any(x in nl for x in ("severity","priority")): pats = [r"(?:Severity|Priority)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
-            elif any(x in nl for x in ("team","department")): pats = [r"(?:Team|Department)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif nl in ("team", "department"): pats = [r"(?:Team|Department)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
             elif any(x in nl for x in ("event_time","event time","time")): pats = [r"(\d{1,2}:\d{2})"]
         for p in pats:
             m = _re.search(p, txt, _re.IGNORECASE | _re.MULTILINE)
