@@ -151,17 +151,16 @@ async def q10_rate_limit_middleware(request: Request, call_next):
         q10_rate_store.setdefault(client_id, [])
         q10_rate_store[client_id] = [t for t in q10_rate_store[client_id] if now - t < 10]
         if len(q10_rate_store[client_id]) >= Q10_RATE_LIMIT:
-            origin = request.headers.get("origin", "")
             resp = JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded"},
-                headers={
-                    "Access-Control-Allow-Origin": origin if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN) else "",
-                    "Access-Control-Allow-Methods": "GET, OPTIONS",
-                    "Access-Control-Allow-Headers": "*",
-                    "Access-Control-Expose-Headers": "X-Request-ID",
-                },
             )
+            origin = request.headers.get("origin", "")
+            if origin in (Q10_ALLOWED_ORIGIN, EXAM_ORIGIN):
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+                resp.headers["Access-Control-Allow-Headers"] = "*"
+                resp.headers["Access-Control-Expose-Headers"] = "X-Request-ID"
             return resp
         q10_rate_store[client_id].append(now)
     return await call_next(request)
@@ -457,12 +456,139 @@ JSON:"""
     return result
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Q3: FIXED SCHEMA INVOICE EXTRACTION (POST /extract with invoice_text)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class InvoiceTextRequest(BaseModel):
+    invoice_text: str = ""
+
+def parse_invoice_fixed(text: str) -> dict:
+    result = {"invoice_no": None, "date": None, "vendor": None, "amount": None, "tax": None, "currency": None}
+    m = re.search(r"(?:Invoice\s*(?:No|Number|#|Ref)[.:\s]*)([\w\-/]+)", text, re.IGNORECASE)
+    if m: result["invoice_no"] = m.group(1).strip()
+    M = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    for pat in [r"(\d{4}-\d{2}-\d{2})", M + r"\s+(\d{1,2}),?\s+(\d{4})", r"(\d{1,2})\s+" + M + r"\s+(\d{4})", r"(?:Date|Issued|Dated|Due|Invoice)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})"]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            months = "JanFebMarAprMayJunJulAugSepOctNovDec"
+            grps = m.groups()
+            if len(grps) == 3:
+                for g in grps:
+                    if g and g[:3] in months: month_num = str((months.index(g[:3])//3)+1).zfill(2); break
+                nums = [g for g in grps if g and g.isdigit()]
+                if len(nums) >= 2: result["date"] = f"{nums[-1]}-{month_num}-{nums[0].zfill(2)}"
+            elif "/" in (m.group(1) or "") or "-" in (m.group(1) or ""):
+                parts = re.split(r"[/-]", m.group(1))
+                if len(parts)==3:
+                    if len(parts[0])==4: result["date"]=f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                    elif len(parts[2])==4: result["date"]=f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+            break
+    m = re.search(r"(?:Vendor|Company|Seller|From|Bill to)[:\s]+([A-Za-z][A-Za-z0-9\s\-&'.]+?)(?:\n|\.|$)", text, re.IGNORECASE)
+    if m: result["vendor"] = m.group(1).strip().rstrip(" .-")
+    if not result["vendor"]:
+        m = re.match(r"^([A-Z][A-Za-z0-9\s\-&.]+)", text.split("\n")[0])
+        if m: result["vendor"] = m.group(1).strip().rstrip(" .-")
+    for pat in [r"(?:Subtotal)[\s.:]*(?:Rs?\.?\s*)?([\d,]+\.?\d*)", r"(?:Item|Items|Subtotal|Amount|Price|Cost|Value)[\s.:]*([\d,]+\.?\d*)"]:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m: result["amount"] = float(m.group(1).replace(",","")); break
+    if result["amount"] is None:
+        lines = text.split("\n")
+        for i,l in enumerate(lines):
+            if re.search(r"(?:GST|IGST|Tax|VAT)", l, re.IGNORECASE):
+                for j in range(i-1, max(i-6,-1), -1):
+                    m = re.search(r"([\d,]+\.?\d*)", lines[j])
+                    if m: result["amount"] = float(m.group(1).replace(",","")); break
+                break
+    if result["amount"] is None:
+        for n in re.findall(r"(\d{3,6}(?:\.\d{1,2})?)", text.replace(",","")):
+            v = float(n)
+            if v > 1000 and not (2000 <= v <= 2030): result["amount"] = v; break
+    m = re.search(r"(?:GST|IGST|VAT|Tax)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    if m: result["tax"] = float(m.group(1).replace(",",""))
+    else:
+        m = re.search(r"(?:GST|IGST|Tax|VAT)\s*\(?(?:\d+%)?\)?[^0-9]*?([\d,]+\.?\d*)", text, re.IGNORECASE)
+        if m: result["tax"] = float(m.group(1).replace(",",""))
+    m = re.search(r"(?:Currency)[:\s]*([A-Z]{3})", text, re.IGNORECASE)
+    if m: result["currency"] = m.group(1).upper()
+    elif "Rs." in text or "INR" in text: result["currency"] = "INR"
+    elif "EUR" in text or "euro" in text.lower(): result["currency"] = "EUR"
+    elif "$" in text or "USD" in text: result["currency"] = "USD"
+    elif "GBP" in text or "pound" in text.lower(): result["currency"] = "GBP"
+    elif "JPY" in text or "yen" in text.lower(): result["currency"] = "JPY"
+    return result
+
 @app.post("/extract")
-async def extract(req: ExtractRequest):
-    if not req.text or not req.text.strip():
+async def extract(request: Request):
+    body = await request.json()
+    if "invoice_text" in body:
+        result = parse_invoice_fixed(body["invoice_text"])
+        return result
+    # Q8: fallback to old text field
+    text = body.get("text", "")
+    if not text or not text.strip():
         raise HTTPException(status_code=422, detail="Text is required")
-    result = extract_invoice(req.text)
-    return ExtractResponse(**result)
+    r = extract_invoice(text)
+    return ExtractResponse(**r)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Q4: DYNAMIC SCHEMA EXTRACTION (POST /dynamic-extract)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DynamicExtractRequest(BaseModel):
+    text: str
+    schema: dict[str, str]
+
+TYPE_CONVERTERS = {
+    "string": lambda v: str(v) if v is not None else None,
+    "integer": lambda v: int(float(str(v).replace(",",""))) if v is not None else None,
+    "float": lambda v: float(str(v).replace(",","")) if v is not None else None,
+    "boolean": lambda v: str(v).lower() in ("true","yes","1") if v is not None else None,
+    "date": lambda v: re.sub(r"^(\d{4})-(\d{2})-(\d{2})$", r"\1-\2-\3", str(v)) if v and re.match(r"^\d{4}-\d{2}-\d{2}$",str(v)) else (lambda x: (lambda m: f"{m.group(3)}-{str((['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].index(m.group(2)[:3]))).zfill(2)}-{m.group(1).zfill(2)}" if m else x)(re.match(r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", str(x), re.IGNORECASE)))(v) if v else None,
+}
+
+def extract_field(text: str, name: str, t: str):
+    def _extract(txt, n, typ):
+        import re as _re
+        nl = n.lower().replace("_"," ").strip()
+        escaped = _re.escape(nl)
+        pats = [fr"(?:{escaped})[:\s]+(.+?)(?:\n|\.|,|;|$)", fr"(?:{escaped})\s+is\s+(.+?)(?:\n|\.|,|;|$)"]
+        if typ == "integer":
+            pats += [fr"(\d+)\s*(?:{escaped})", fr"(?:{escaped})[:\s]*(\d+)", r"bought\s+(\d+)"]
+        elif typ == "float":
+            pats += [fr"(?:{escaped})[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", r"for\s+Rs\.?\s*([\d,]+)", r"(\d+\.?\d*)"]
+        elif typ == "date":
+            pats += [r"(\d{4}-\d{2}-\d{2})", r"(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})", r"on\s+(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})"]
+        elif typ == "string":
+            if nl in ("customer_name","customer name","name","customer"): pats = [r"^([A-Z][a-z]+)", r"from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"]
+            elif nl in ("store","vendor","seller","company"): pats = [r"from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", r"at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"]
+            elif nl in ("item","product","service"): pats = [r"(?:\d+\s+)([a-z]+)"]
+            elif nl in ("root_cause","root cause","reason"): pats = [r"(?:Root cause|Reason)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif nl in ("severity","priority"): pats = [r"(?:Severity|Priority)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif nl in ("team","department"): pats = [r"(?:Team|Department)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif nl in ("event_time","event time","time"): pats = [r"(\d{1,2}:\d{2})"]
+        for p in pats:
+            m = _re.search(p, txt, _re.IGNORECASE | _re.MULTILINE)
+            if m:
+                v = m.group(1).strip().rstrip(".,;")
+                conv = TYPE_CONVERTERS.get(typ, TYPE_CONVERTERS["string"])
+                try: return conv(v)
+                except: continue
+        return None
+    return _extract(text, name, t)
+
+
+@app.options("/dynamic-extract")
+async def dyn_extract_preflight():
+    return JSONResponse(content=None, status_code=204)
+
+@app.post("/dynamic-extract")
+async def dynamic_extract(req: DynamicExtractRequest):
+    result = {}
+    for field_name, field_type in req.schema.items():
+        result[field_name] = extract_field(req.text, field_name, field_type)
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
