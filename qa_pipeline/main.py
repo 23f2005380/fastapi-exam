@@ -95,26 +95,40 @@ def parse_invoice_fixed(text: str) -> dict:
         if m:
             result["vendor"] = m.group(1).strip().rstrip(" .-")
 
-    # Amount (subtotal before tax)
+    # Amount (subtotal before tax) — look for labeled amount first
     amount_pats = [
         r"(?:Subtotal)[\s.:]*(?:Rs?\.?\s*)?([\d,]+\.?\d*)",
-        r"(?:Item|Items|Subtotal|Amount)[\s.:]*([\d,]+\.\d{2})",
+        r"(?:Item|Items|Subtotal|Amount|Price|Cost|Value)[\s.:]*([\d,]+\.?\d*)",
     ]
     for pat in amount_pats:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
-            result["amount"] = float(m.group(1).replace(",", ""))
-            break
+            val = float(m.group(1).replace(",", ""))
+            if val > 0:
+                result["amount"] = val
+                break
     if result["amount"] is None:
-        # Fallback: find the line just before a tax line
+        # Find tax line, then find the line just above it
         lines = text.split("\n")
+        tax_idx = None
         for i, l in enumerate(lines):
             if re.search(r"(?:GST|IGST|Tax|VAT)", l, re.IGNORECASE):
-                if i > 0:
-                    m = re.search(r"([\d,]+\.\d{2})", lines[i - 1])
-                    if m:
-                        result["amount"] = float(m.group(1).replace(",", ""))
+                tax_idx = i
                 break
+        if tax_idx and tax_idx > 0:
+            # Check up to 5 lines above for amounts
+            for j in range(tax_idx - 1, max(tax_idx - 6, -1), -1):
+                m = re.search(r"([\d,]+\.?\d*)", lines[j])
+                if m:
+                    val = float(m.group(1).replace(",", ""))
+                    if val > 0:
+                        result["amount"] = val
+                        break
+        # Last resort: find the first large standalone number
+        if result["amount"] is None:
+            all_nums = re.findall(r"\b(\d{3,6}(?:\.\d{1,2})?)\b", text.replace(",", ""))
+            if all_nums:
+                result["amount"] = float(all_nums[0])
 
     # Tax
     m = re.search(r"(?:GST|IGST|VAT)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
