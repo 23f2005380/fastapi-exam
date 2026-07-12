@@ -44,26 +44,33 @@ def parse_invoice_fixed(text: str) -> dict:
         result["invoice_no"] = m.group(1).strip()
 
     # Date — try multiple formats
+    M = r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     date_pats = [
         r"(\d{4}-\d{2}-\d{2})",
-        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{4})",
-        r"(\d{1,2})\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})",
+        M + r"\s+(\d{1,2}),?\s+(\d{4})",
+        r"(\d{1,2})\s+" + M + r"\s+(\d{4})",
         r"(?:Date|Issued|Dated|Due|Invoice)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
         r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
     ]
     for pat in date_pats:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
-            if m.lastindex == 3:
-                months = "JanFebMarAprMayJunJulAugSepOctNovDec"
-                # Check if first group is month name (letters) or day (digits)
-                g1 = m.group(1)
-                if g1.isalpha():  # "March 10, 2026" format
-                    month_num = str((months.index(g1[:3]) // 3) + 1).zfill(2)
-                    result["date"] = f"{m.group(3)}-{month_num}-{m.group(2).zfill(2)}"
-                else:  # "10 March 2026" format
-                    month_num = str((months.index(m.group(2)[:3]) // 3) + 1).zfill(2)
-                    result["date"] = f"{m.group(3)}-{month_num}-{m.group(1).zfill(2)}"
+            months = "JanFebMarAprMayJunJulAugSepOctNovDec"
+            grps = m.groups()
+            if len(grps) == 3:
+                # Find month name among the groups
+                for g in grps:
+                    if g and g[:3] in months:
+                        month_num = str((months.index(g[:3]) // 3) + 1).zfill(2)
+                        break
+                # Find day and year (the groups that are digits)
+                nums = [g for g in grps if g and g.isdigit()]
+                if len(nums) >= 2:
+                    day = nums[0].zfill(2)
+                    yr = nums[-1]
+                    if len(yr) == 2:
+                        yr = "20" + yr
+                    result["date"] = f"{yr}-{month_num}-{day}"
             elif "/" in m.group(1) or "-" in m.group(1):
                 parts = re.split(r"[/-]", m.group(1))
                 if len(parts) == 3:
