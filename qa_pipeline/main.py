@@ -46,16 +46,24 @@ def parse_invoice_fixed(text: str) -> dict:
     # Date — try multiple formats
     date_pats = [
         r"(\d{4}-\d{2}-\d{2})",
-        r"(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})",
-        r"(?:Date|Issued|Dated)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{4})",
+        r"(\d{1,2})\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})",
+        r"(?:Date|Issued|Dated|Due|Invoice)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"(\d{1,2}[/-]\d{1,2}[/-]\d{4})",
     ]
     for pat in date_pats:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
             if m.lastindex == 3:
                 months = "JanFebMarAprMayJunJulAugSepOctNovDec"
-                month_num = str((months.index(m.group(2)[:3]) // 3) + 1).zfill(2)
-                result["date"] = f"{m.group(3)}-{month_num}-{m.group(1).zfill(2)}"
+                # Check if first group is month name (letters) or day (digits)
+                g1 = m.group(1)
+                if g1.isalpha():  # "March 10, 2026" format
+                    month_num = str((months.index(g1[:3]) // 3) + 1).zfill(2)
+                    result["date"] = f"{m.group(3)}-{month_num}-{m.group(2).zfill(2)}"
+                else:  # "10 March 2026" format
+                    month_num = str((months.index(m.group(2)[:3]) // 3) + 1).zfill(2)
+                    result["date"] = f"{m.group(3)}-{month_num}-{m.group(1).zfill(2)}"
             elif "/" in m.group(1) or "-" in m.group(1):
                 parts = re.split(r"[/-]", m.group(1))
                 if len(parts) == 3:
