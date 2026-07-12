@@ -562,12 +562,12 @@ def extract_field(text: str, name: str, t: str):
             pats += [r"(\d{4}-\d{2}-\d{2})", r"(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})", r"on\s+(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4})"]
         elif typ == "string":
             if nl in ("customer_name","customer name","name","customer"): pats = [r"^([A-Z][a-z]+)", r"from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"]
-            elif nl in ("store","vendor","seller","company"): pats = [r"from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", r"at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"]
-            elif nl in ("item","product","service"): pats = [r"(?:\d+\s+)([a-z]+)"]
-            elif nl in ("root_cause","root cause","reason"): pats = [r"(?:Root cause|Reason)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
-            elif nl in ("severity","priority"): pats = [r"(?:Severity|Priority)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
-            elif nl in ("team","department"): pats = [r"(?:Team|Department)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
-            elif nl in ("event_time","event time","time"): pats = [r"(\d{1,2}:\d{2})"]
+            elif any(x in nl for x in ("store","vendor","seller","company")): pats = [r"from\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", r"at\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)"]
+            elif any(x in nl for x in ("item","product","service")): pats = [r"(?:\d+\s+)([a-z]+)"]
+            elif any(x in nl for x in ("root_cause","root cause","reason")): pats = [r"(?:Root cause|Reason)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif any(x in nl for x in ("severity","priority")): pats = [r"(?:Severity|Priority)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif any(x in nl for x in ("team","department")): pats = [r"(?:Team|Department)[:\s]+(.+?)(?:\n|\.|,|;|$)"]
+            elif any(x in nl for x in ("event_time","event time","time")): pats = [r"(\d{1,2}:\d{2})"]
         for p in pats:
             m = _re.search(p, txt, _re.IGNORECASE | _re.MULTILINE)
             if m:
