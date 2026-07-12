@@ -134,11 +134,11 @@ def parse_invoice_fixed(text: str) -> dict:
                     break
 
     # Tax
-    m = re.search(r"(?:GST|IGST|VAT)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    m = re.search(r"(?:GST|IGST|VAT|Tax)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
     if m:
         result["tax"] = float(m.group(1).replace(",", ""))
     else:
-        m = re.search(r"(?:GST|IGST|Tax|VAT)\s*\(?(?:\d+%)?\)?[^0-9]*?([\d,]+\.\d{2})", text, re.IGNORECASE)
+        m = re.search(r"(?:GST|IGST|Tax|VAT)\s*\(?(?:\d+%)?\)?[^0-9]*?([\d,]+\.?\d*)", text, re.IGNORECASE)
         if m:
             result["tax"] = float(m.group(1).replace(",", ""))
 
