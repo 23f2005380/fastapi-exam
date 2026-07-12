@@ -124,11 +124,14 @@ def parse_invoice_fixed(text: str) -> dict:
                     if val > 0:
                         result["amount"] = val
                         break
-        # Last resort: find the first large standalone number
+        # Last resort: find the first large standalone number (>1000, not a year)
         if result["amount"] is None:
-            all_nums = re.findall(r"\b(\d{3,6}(?:\.\d{1,2})?)\b", text.replace(",", ""))
-            if all_nums:
-                result["amount"] = float(all_nums[0])
+            all_nums = re.findall(r"(\d{3,6}(?:\.\d{1,2})?)", text.replace(",", ""))
+            for n in all_nums:
+                val = float(n)
+                if val > 1000 and not (2000 <= val <= 2030):
+                    result["amount"] = val
+                    break
 
     # Tax
     m = re.search(r"(?:GST|IGST|VAT)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
