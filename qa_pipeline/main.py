@@ -96,25 +96,25 @@ def parse_invoice_fixed(text: str) -> dict:
             result["vendor"] = m.group(1).strip().rstrip(" .-")
 
     # Amount (subtotal before tax)
-    m = re.search(r"(?:Subtotal|subtotal)[\s.:]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
-    if m:
-        result["amount"] = float(m.group(1).replace(",", ""))
-    else:
-        m = re.search(r"(?:Item|Items|Subtotal|Amount|Total|Price)[^0-9]*?Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
+    amount_pats = [
+        r"(?:Subtotal)[\s.:]*(?:Rs?\.?\s*)?([\d,]+\.?\d*)",
+        r"(?:Item|Items|Subtotal|Amount)[\s.:]*([\d,]+\.\d{2})",
+    ]
+    for pat in amount_pats:
+        m = re.search(pat, text, re.IGNORECASE)
         if m:
             result["amount"] = float(m.group(1).replace(",", ""))
+            break
     if result["amount"] is None:
-        # Try to find a number that appears before a tax line
+        # Fallback: find the line just before a tax line
         lines = text.split("\n")
-        tax_idx = None
         for i, l in enumerate(lines):
             if re.search(r"(?:GST|IGST|Tax|VAT)", l, re.IGNORECASE):
-                tax_idx = i
+                if i > 0:
+                    m = re.search(r"([\d,]+\.\d{2})", lines[i - 1])
+                    if m:
+                        result["amount"] = float(m.group(1).replace(",", ""))
                 break
-        if tax_idx and tax_idx > 0:
-            m = re.search(r"Rs?\.?\s*([\d,]+\.?\d*)", lines[tax_idx - 1])
-            if m:
-                result["amount"] = float(m.group(1).replace(",", ""))
 
     # Tax
     m = re.search(r"(?:GST|IGST|VAT)\s*\(?(?:\d+%)?\)?[:\s]*Rs?\.?\s*([\d,]+\.?\d*)", text, re.IGNORECASE)
