@@ -575,6 +575,18 @@ def extract_field(text: str, name: str, t: str):
                 conv = TYPE_CONVERTERS.get(typ, TYPE_CONVERTERS["string"])
                 try: return conv(v)
                 except: continue
+        # Fallback: try specific patterns by field name
+        if typ == "string":
+            # Team names: "X vs Y" or "Team X: Y"
+            m = _re.search(r"(\w[\w\s]+)\s+vs\s+(\w[\w\s]+)", txt, _re.IGNORECASE)
+            if m:
+                groups = m.groups()
+                if "team_a" in name or "team1" in name: return groups[0].strip()
+                if "team_b" in name or "team2" in name: return groups[1].strip()
+            m = _re.search(r"(?:Team|Side)\s*(?:A|1|One)[:\s-]+([A-Z][a-z]+)", txt, _re.IGNORECASE)
+            if m and ("team_a" in name or "team1" in name): return m.group(1).strip()
+            m = _re.search(r"(?:Team|Side)\s*(?:B|2|Two)[:\s-]+([A-Z][a-z]+)", txt, _re.IGNORECASE)
+            if m and ("team_b" in name or "team2" in name): return m.group(1).strip()
         return None
     return _extract(text, name, t)
 
