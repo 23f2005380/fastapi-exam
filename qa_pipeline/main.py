@@ -146,12 +146,22 @@ def parse_invoice_fixed(text: str) -> dict:
     m = re.search(r"(?:Currency)[:\s]*([A-Z]{3})", text, re.IGNORECASE)
     if m:
         result["currency"] = m.group(1).upper()
-    elif "Rs." in text or "INR" in text:
+    elif "Rs." in text or "INR" in text or "\u20b9" in text:
         result["currency"] = "INR"
-    elif "$" in text:
+    elif "€" in text or "EUR" in text or "euro" in text.lower():
+        result["currency"] = "EUR"
+    elif "$" in text or "USD" in text:
         result["currency"] = "USD"
+    elif "\u00a3" in text or "GBP" in text or "pound" in text.lower():
+        result["currency"] = "GBP"
+    elif "\u00a5" in text or "JPY" in text or "yen" in text.lower():
+        result["currency"] = "JPY"
 
     return result
+
+@app.options("/extract")
+async def extract_preflight():
+    return JSONResponse(content=None, status_code=204)
 
 @app.post("/extract")
 async def fixed_invoice_extract(req: InvoiceExtractRequest):
@@ -252,6 +262,10 @@ def extract_field(text: str, field_name: str, field_type: str) -> Any:
                 continue
 
     return None
+
+@app.options("/dynamic-extract")
+async def dynamic_extract_preflight():
+    return JSONResponse(content=None, status_code=204)
 
 @app.post("/dynamic-extract")
 async def dynamic_extract(req: DynamicExtractRequest):
