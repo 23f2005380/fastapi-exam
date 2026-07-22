@@ -285,6 +285,7 @@ async def dynamic_extract(req: DynamicExtractRequest):
 # CORS handled by the existing cors_all middleware (ACAO for every path).
 # ═══════════════════════════════════════════════════════════════════════════
 import os as _os
+import time as _time
 import base64 as _b64
 import math as _math
 import statistics as _stats
@@ -295,11 +296,29 @@ _GA3_KEY = _os.environ.get("GEMINI_API_KEY") or _os.environ.get("OPENAI_API_KEY"
 _GA3_BASE = _os.environ.get(
     "OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
-_CHAT_MODEL = _os.environ.get("CHAT_MODEL", "gemini-flash-latest")
-_VISION_MODEL = _os.environ.get("VISION_MODEL", "gemini-flash-latest")
+# gemini-flash-lite-latest: non-thinking, real free-tier headroom (survives bursts).
+_CHAT_MODEL = _os.environ.get("CHAT_MODEL", "gemini-flash-lite-latest")
+_VISION_MODEL = _os.environ.get("VISION_MODEL", "gemini-flash-lite-latest")
 _EMBED_MODEL = _os.environ.get("EMBED_MODEL", "gemini-embedding-001")
-_AUDIO_MODEL = _os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-latest")
-_ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY)
+_AUDIO_MODEL = _os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-lite-latest")
+_ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY, max_retries=0)
+
+
+def _ga3_retry(fn, tries=6, base=2.0):
+    """Call fn() with exponential backoff on rate-limit / transient errors."""
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            msg = str(e)
+            transient = ("429" in msg or "rate" in msg.lower() or "quota" in msg.lower()
+                         or "500" in msg or "503" in msg or "timeout" in msg.lower())
+            if not transient or i == tries - 1:
+                raise
+            _time.sleep(base * (2 ** i) + 0.5)
+    raise last
 
 
 def _ga3_loads(txt: str) -> dict:
@@ -312,25 +331,34 @@ def _ga3_loads(txt: str) -> dict:
 
 
 def _ga3_chat_json(system: str, user: str) -> dict:
-    r = _ga3_client.chat.completions.create(
-        model=_CHAT_MODEL,
-        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-    return _ga3_loads(r.choices[0].message.content)
+    def _do():
+        r = _ga3_client.chat.completions.create(
+            model=_CHAT_MODEL,
+            messages=[{"role": "system", "content": system},
+                      {"role": "user", "content": user}],
+            response_format={"type": "json_object"},
+            temperature=0,
+        )
+        return _ga3_loads(r.choices[0].message.content)
+    return _ga3_retry(_do)
 
 
 def _ga3_embed(texts):
-    try:
+    def _batch():
         resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=texts)
         return [d.embedding for d in resp.data]
-    except Exception:
+
+    def _one():
         out = []
         for t in texts:
-            resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t)
+            resp = _ga3_retry(lambda t=t: _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t))
             out.append(resp.data[0].embedding)
         return out
+
+    try:
+        return _ga3_retry(_batch)
+    except Exception:
+        return _one()
 
 
 def _cos(a, b):
@@ -356,17 +384,20 @@ async def ga3_answer_image(request: Request):
     img = body["image_base64"]
     if not img.startswith("data:"):
         img = "data:image/png;base64," + img
-    r = _ga3_client.chat.completions.create(
-        model=_VISION_MODEL,
-        messages=[{"role": "user", "content": [
-            {"type": "text", "text":
-                "Answer the question about the image. Reply with ONLY the answer value. "
-                "If numeric, output just the number (no currency symbol, no units, no commas). "
-                f"Question: {body['question']}"},
-            {"type": "image_url", "image_url": {"url": img}},
-        ]}],
-        temperature=0,
-    )
+
+    def _do():
+        return _ga3_client.chat.completions.create(
+            model=_VISION_MODEL,
+            messages=[{"role": "user", "content": [
+                {"type": "text", "text":
+                    "Answer the question about the image. Reply with ONLY the answer value. "
+                    "If numeric, output just the number (no currency symbol, no units, no commas). "
+                    f"Question: {body['question']}"},
+                {"type": "image_url", "image_url": {"url": img}},
+            ]}],
+            temperature=0,
+        )
+    r = _ga3_retry(_do)
     return {"answer": str(r.choices[0].message.content.strip())}
 
 
@@ -430,9 +461,11 @@ def _ga3_transcribe(raw: bytes, mime: str) -> str:
         {"text": "Transcribe this audio verbatim. Output only the transcript text."},
         {"inline_data": {"mime_type": mime, "data": _b64.b64encode(raw).decode()}},
     ]}]}).encode()
-    req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
-    with _urlreq.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode())
+    def _do():
+        req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
+        with _urlreq.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode())
+    data = _ga3_retry(_do)
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
