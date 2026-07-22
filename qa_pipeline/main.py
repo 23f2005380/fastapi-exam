@@ -301,6 +301,27 @@ _EMBED_MODEL = _os.environ.get("EMBED_MODEL", "gemini-embedding-001")
 _AUDIO_MODEL = _os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-latest")
 _ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY)
 
+import time as _time
+
+
+def _with_retry(fn, tries=5, base=5):
+    """Retry a call on 429 / rate-limit, honouring retryDelay when present.
+    Handles peak-RPM throttling so the grader gets a real answer, not a 500."""
+    last = None
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            msg = str(e)
+            if not any(k in msg for k in ("429", "RESOURCE_EXHAUSTED", "rate limit",
+                                          "RateLimit", "quota", "Too Many Requests")):
+                raise
+            m = re.search(r"retry[dD]elay['\"]?[:=]\s*['\"]?(\d+)", msg)
+            wait = int(m.group(1)) + 1 if m else base * (2 ** i)
+            _time.sleep(min(wait, 30))
+    raise last
+
 
 def _ga3_loads(txt: str) -> dict:
     txt = txt.strip()
@@ -312,23 +333,23 @@ def _ga3_loads(txt: str) -> dict:
 
 
 def _ga3_chat_json(system: str, user: str) -> dict:
-    r = _ga3_client.chat.completions.create(
+    r = _with_retry(lambda: _ga3_client.chat.completions.create(
         model=_CHAT_MODEL,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         response_format={"type": "json_object"},
         temperature=0,
-    )
+    ))
     return _ga3_loads(r.choices[0].message.content)
 
 
 def _ga3_embed(texts):
     try:
-        resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=texts)
+        resp = _with_retry(lambda: _ga3_client.embeddings.create(model=_EMBED_MODEL, input=texts))
         return [d.embedding for d in resp.data]
     except Exception:
         out = []
         for t in texts:
-            resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t)
+            resp = _with_retry(lambda: _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t))
             out.append(resp.data[0].embedding)
         return out
 
@@ -356,7 +377,7 @@ async def ga3_answer_image(request: Request):
     img = body["image_base64"]
     if not img.startswith("data:"):
         img = "data:image/png;base64," + img
-    r = _ga3_client.chat.completions.create(
+    r = _with_retry(lambda: _ga3_client.chat.completions.create(
         model=_VISION_MODEL,
         messages=[{"role": "user", "content": [
             {"type": "text", "text":
@@ -366,7 +387,7 @@ async def ga3_answer_image(request: Request):
             {"type": "image_url", "image_url": {"url": img}},
         ]}],
         temperature=0,
-    )
+    ))
     return {"answer": str(r.choices[0].message.content.strip())}
 
 
@@ -430,9 +451,11 @@ def _ga3_transcribe(raw: bytes, mime: str) -> str:
         {"text": "Transcribe this audio verbatim. Output only the transcript text."},
         {"inline_data": {"mime_type": mime, "data": _b64.b64encode(raw).decode()}},
     ]}]}).encode()
-    req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
-    with _urlreq.urlopen(req, timeout=120) as resp:
-        data = json.loads(resp.read().decode())
+    def _do():
+        req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
+        with _urlreq.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode())
+    data = _with_retry(_do)
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
