@@ -285,7 +285,6 @@ async def dynamic_extract(req: DynamicExtractRequest):
 # CORS handled by the existing cors_all middleware (ACAO for every path).
 # ═══════════════════════════════════════════════════════════════════════════
 import os as _os
-import time as _time
 import base64 as _b64
 import math as _math
 import statistics as _stats
@@ -296,29 +295,11 @@ _GA3_KEY = _os.environ.get("GEMINI_API_KEY") or _os.environ.get("OPENAI_API_KEY"
 _GA3_BASE = _os.environ.get(
     "OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
-# gemini-flash-lite-latest: non-thinking, real free-tier headroom (survives bursts).
-_CHAT_MODEL = _os.environ.get("CHAT_MODEL", "gemini-flash-lite-latest")
-_VISION_MODEL = _os.environ.get("VISION_MODEL", "gemini-flash-lite-latest")
+_CHAT_MODEL = _os.environ.get("CHAT_MODEL", "gemini-flash-latest")
+_VISION_MODEL = _os.environ.get("VISION_MODEL", "gemini-flash-latest")
 _EMBED_MODEL = _os.environ.get("EMBED_MODEL", "gemini-embedding-001")
-_AUDIO_MODEL = _os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-lite-latest")
-_ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY, max_retries=0)
-
-
-def _ga3_retry(fn, tries=6, base=2.0):
-    """Call fn() with exponential backoff on rate-limit / transient errors."""
-    last = None
-    for i in range(tries):
-        try:
-            return fn()
-        except Exception as e:  # noqa: BLE001
-            last = e
-            msg = str(e)
-            transient = ("429" in msg or "rate" in msg.lower() or "quota" in msg.lower()
-                         or "500" in msg or "503" in msg or "timeout" in msg.lower())
-            if not transient or i == tries - 1:
-                raise
-            _time.sleep(base * (2 ** i) + 0.5)
-    raise last
+_AUDIO_MODEL = _os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-latest")
+_ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY)
 
 
 def _ga3_loads(txt: str) -> dict:
@@ -331,34 +312,25 @@ def _ga3_loads(txt: str) -> dict:
 
 
 def _ga3_chat_json(system: str, user: str) -> dict:
-    def _do():
-        r = _ga3_client.chat.completions.create(
-            model=_CHAT_MODEL,
-            messages=[{"role": "system", "content": system},
-                      {"role": "user", "content": user}],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        return _ga3_loads(r.choices[0].message.content)
-    return _ga3_retry(_do)
+    r = _ga3_client.chat.completions.create(
+        model=_CHAT_MODEL,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    return _ga3_loads(r.choices[0].message.content)
 
 
 def _ga3_embed(texts):
-    def _batch():
+    try:
         resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=texts)
         return [d.embedding for d in resp.data]
-
-    def _one():
+    except Exception:
         out = []
         for t in texts:
-            resp = _ga3_retry(lambda t=t: _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t))
+            resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t)
             out.append(resp.data[0].embedding)
         return out
-
-    try:
-        return _ga3_retry(_batch)
-    except Exception:
-        return _one()
 
 
 def _cos(a, b):
@@ -384,20 +356,17 @@ async def ga3_answer_image(request: Request):
     img = body["image_base64"]
     if not img.startswith("data:"):
         img = "data:image/png;base64," + img
-
-    def _do():
-        return _ga3_client.chat.completions.create(
-            model=_VISION_MODEL,
-            messages=[{"role": "user", "content": [
-                {"type": "text", "text":
-                    "Answer the question about the image. Reply with ONLY the answer value. "
-                    "If numeric, output just the number (no currency symbol, no units, no commas). "
-                    f"Question: {body['question']}"},
-                {"type": "image_url", "image_url": {"url": img}},
-            ]}],
-            temperature=0,
-        )
-    r = _ga3_retry(_do)
+    r = _ga3_client.chat.completions.create(
+        model=_VISION_MODEL,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text":
+                "Answer the question about the image. Reply with ONLY the answer value. "
+                "If numeric, output just the number (no currency symbol, no units, no commas). "
+                f"Question: {body['question']}"},
+            {"type": "image_url", "image_url": {"url": img}},
+        ]}],
+        temperature=0,
+    )
     return {"answer": str(r.choices[0].message.content.strip())}
 
 
@@ -461,11 +430,9 @@ def _ga3_transcribe(raw: bytes, mime: str) -> str:
         {"text": "Transcribe this audio verbatim. Output only the transcript text."},
         {"inline_data": {"mime_type": mime, "data": _b64.b64encode(raw).decode()}},
     ]}]}).encode()
-    def _do():
-        req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
-        with _urlreq.urlopen(req, timeout=120) as resp:
-            return json.loads(resp.read().decode())
-    data = _ga3_retry(_do)
+    req = _urlreq.Request(url, data=payload, headers={"content-type": "application/json"})
+    with _urlreq.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode())
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
@@ -539,6 +506,177 @@ async def ga3_korean_audio(request: Request):
                                  "mode", "range", "allowed_values", "value_range"]}
         return {"rows": 0, "columns": [], **empty, "correlation": [],
                 "_error": str(e), "_transcript": transcript}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TDS GA4 (RAG) — Q3 grounded-answer, Q4 vector-search, Q5 graphrag
+# Paths: /grounded-answer  /vector-search  /extract-graph /graph-query /community-summary
+# CORS handled by the existing cors_all middleware.
+# ═══════════════════════════════════════════════════════════════════════════
+import csv as _csv
+
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+
+
+@app.options("/grounded-answer")
+@app.options("/vector-search")
+@app.options("/extract-graph")
+@app.options("/graph-query")
+@app.options("/community-summary")
+async def ga4_preflight():
+    return JSONResponse(content=None, status_code=204)
+
+
+# ─── Q3: Anti-hallucination grounded answer ────────────────────────────────
+@app.post("/grounded-answer")
+async def ga4_grounded(request: Request):
+    body = await request.json()
+    question = (body.get("question") or "").strip()
+    chunks = body.get("chunks") or []
+    valid_ids = {c.get("chunk_id") for c in chunks}
+    if not question or not chunks:
+        return {"answer": "I don't know", "citations": [], "confidence": 0.0, "answerable": False}
+    ctx = "\n".join(f'[{c.get("chunk_id")}] {c.get("text","")}' for c in chunks)
+    system = (
+        "You answer a question STRICTLY from the provided context chunks. Never use outside "
+        "knowledge. If the answer is not fully supported by the chunks, you are NOT able to "
+        "answer. Return JSON with keys: answer (string), citations (array of chunk_id strings "
+        "you actually used, only real IDs), confidence (0..1), answerable (boolean). "
+        "If not answerable: answer='I don't know', citations=[], confidence<=0.3, answerable=false. "
+        "If answerable: cite only the chunk_ids that support the answer and set confidence 0.7..1.0."
+    )
+    user = f"Context chunks:\n{ctx}\n\nQuestion: {question}\n\nReturn ONLY the JSON."
+    try:
+        out = _ga3_chat_json(system, user)
+    except Exception:
+        return {"answer": "I don't know", "citations": [], "confidence": 0.0, "answerable": False}
+    answerable = bool(out.get("answerable"))
+    cites = [c for c in (out.get("citations") or []) if c in valid_ids]
+    if not answerable or not cites:
+        return {"answer": "I don't know", "citations": [], "confidence": min(float(out.get("confidence", 0.0) or 0.0), 0.3), "answerable": False}
+    conf = float(out.get("confidence", 0.8) or 0.8)
+    conf = max(0.7, min(conf, 1.0))
+    return {"answer": str(out.get("answer", "")).strip(), "citations": cites,
+            "confidence": round(conf, 2), "answerable": True}
+
+
+# ─── Q4: Vector search + metadata filter + rerank ──────────────────────────
+def _load_vs():
+    docs = {}
+    with open(_os.path.join(_HERE, "documents.csv"), encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            row["year"] = int(row["year"])
+            docs[row["doc_id"]] = row
+    emb = json.load(open(_os.path.join(_HERE, "embeddings.json"), encoding="utf-8"))
+    rr = json.load(open(_os.path.join(_HERE, "reranker_scores.json"), encoding="utf-8"))
+    return docs, emb, rr
+
+try:
+    _VS_DOCS, _VS_EMB, _VS_RR = _load_vs()
+except Exception:
+    _VS_DOCS, _VS_EMB, _VS_RR = {}, {}, {}
+
+
+def _passes(doc, flt):
+    for key, cond in (flt or {}).items():
+        val = doc.get(key)
+        if isinstance(cond, dict):
+            if "gte" in cond and not (val >= cond["gte"]):
+                return False
+            if "lte" in cond and not (val <= cond["lte"]):
+                return False
+            if "gt" in cond and not (val > cond["gt"]):
+                return False
+            if "lt" in cond and not (val < cond["lt"]):
+                return False
+            if "in" in cond and val not in cond["in"]:
+                return False
+        else:
+            if val != cond:
+                return False
+    return True
+
+
+@app.post("/vector-search")
+async def ga4_vector_search(request: Request):
+    body = await request.json()
+    qid = body.get("query_id")
+    qv = body.get("query_vector") or []
+    top_k = int(body.get("top_k", 10))
+    rerank_top_n = int(body.get("rerank_top_n", 3))
+    flt = body.get("filter") or {}
+    # 1) filter
+    cand = [d for d in _VS_DOCS.values() if _passes(d, flt)]
+    # 2) vector similarity -> top_k (cosine desc, tie doc_id asc)
+    scored = []
+    for d in cand:
+        did = d["doc_id"]
+        if did in _VS_EMB:
+            scored.append((_cos(qv, _VS_EMB[did]), did))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    top = [did for _, did in scored[:top_k]]
+    # 3) rerank via lookup table (score desc, tie doc_id asc)
+    table = _VS_RR.get(qid, {})
+    reranked = sorted(top, key=lambda did: (-table.get(did, float("-inf")), did))
+    return {"matches": reranked[:rerank_top_n]}
+
+
+# ─── Q5: GraphRAG (3 endpoints) ────────────────────────────────────────────
+@app.post("/extract-graph")
+async def ga4_extract_graph(request: Request):
+    body = await request.json()
+    system = (
+        "Extract a knowledge graph from the text. Entity types allowed: Person, Organization, "
+        "Product, Framework. Relationship types allowed: FOUNDED, DEVELOPED, INTEGRATED_INTO, "
+        "HIRED, AUTHORED, CREATED. Return JSON: {\"entities\":[{\"name\":..,\"type\":..}], "
+        "\"relationships\":[{\"source\":..,\"target\":..,\"relation\":..}]}. Use exact names as "
+        "written. Only include entities/relationships explicitly stated."
+    )
+    try:
+        out = _ga3_chat_json(system, f"Text:\n{body.get('text','')}")
+        return {"entities": out.get("entities", []), "relationships": out.get("relationships", [])}
+    except Exception as e:
+        return {"entities": [], "relationships": [], "_error": str(e)}
+
+
+@app.post("/graph-query")
+async def ga4_graph_query(request: Request):
+    body = await request.json()
+    graph = body.get("graph", {})
+    system = (
+        "You answer a question by multi-hop reasoning over the given knowledge graph "
+        "(entities + relationships). Return JSON: {\"answer\": <entity name string>, "
+        "\"reasoning_path\": [<entity names in the traversal order>], \"hops\": <integer = "
+        "number of edges traversed>}. Use only entities/relationships present in the graph."
+    )
+    user = f"Graph:\n{json.dumps(graph)}\n\nQuestion: {body.get('question','')}\n\nReturn ONLY the JSON."
+    try:
+        out = _ga3_chat_json(system, user)
+        path = out.get("reasoning_path", []) or []
+        hops = out.get("hops")
+        if not isinstance(hops, int):
+            hops = max(0, len(path) - 1)
+        return {"answer": str(out.get("answer", "")).strip(), "reasoning_path": path, "hops": hops}
+    except Exception as e:
+        return {"answer": "", "reasoning_path": [], "hops": 0, "_error": str(e)}
+
+
+@app.post("/community-summary")
+async def ga4_community_summary(request: Request):
+    body = await request.json()
+    cid = body.get("community_id")
+    system = (
+        "Summarize the given community of a knowledge graph in 1-3 sentences, describing the "
+        "central entities and how they relate. Return JSON: {\"community_id\": <id>, "
+        "\"summary\": <string>}."
+    )
+    user = (f"community_id: {cid}\nentities: {json.dumps(body.get('entities', []))}\n"
+            f"relationships: {json.dumps(body.get('relationships', []))}\n\nReturn ONLY the JSON.")
+    try:
+        out = _ga3_chat_json(system, user)
+        return {"community_id": cid, "summary": str(out.get("summary", "")).strip()}
+    except Exception as e:
+        return {"community_id": cid, "summary": "", "_error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
