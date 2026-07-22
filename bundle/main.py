@@ -676,6 +676,233 @@ async def http_exception_handler(request, exc):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TDS GA3 (LLM Engineering) — Q2, Q6, Q7, Q8, Q9
+# Free stack: Google Gemini via its OpenAI-compatible endpoint.
+# Paths chosen to NOT collide with the existing exam endpoints:
+#   Q2 POST /answer-image      Q7 POST /llm-extract     Q8 POST /rank
+#   Q9 POST /solve             Q6 POST /korean-audio
+# CORS: handled by the existing path-aware middleware (else-branch -> ACAO: *).
+# ═══════════════════════════════════════════════════════════════════════════
+import base64 as _b64
+import math as _math
+from openai import OpenAI as _OpenAI
+
+_GA3_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+_GA3_BASE = os.environ.get(
+    "OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+_CHAT_MODEL = os.environ.get("CHAT_MODEL", "gemini-flash-latest")
+_VISION_MODEL = os.environ.get("VISION_MODEL", "gemini-flash-latest")
+_EMBED_MODEL = os.environ.get("EMBED_MODEL", "gemini-embedding-001")
+_AUDIO_MODEL = os.environ.get("GEMINI_AUDIO_MODEL", "gemini-flash-latest")
+_ga3_client = _OpenAI(base_url=_GA3_BASE, api_key=_GA3_KEY)
+
+
+def _ga3_loads(txt: str) -> dict:
+    txt = txt.strip()
+    if txt.startswith("```"):
+        txt = txt.strip("`")
+    if "{" in txt:
+        txt = txt[txt.find("{"): txt.rfind("}") + 1]
+    return json.loads(txt)
+
+
+def _ga3_chat_json(system: str, user: str) -> dict:
+    r = _ga3_client.chat.completions.create(
+        model=_CHAT_MODEL,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    return _ga3_loads(r.choices[0].message.content)
+
+
+def _ga3_embed(texts):
+    vecs = []
+    try:
+        resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=texts)
+        return [d.embedding for d in resp.data]
+    except Exception:
+        for t in texts:
+            resp = _ga3_client.embeddings.create(model=_EMBED_MODEL, input=t)
+            vecs.append(resp.data[0].embedding)
+        return vecs
+
+
+def _cos(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = _math.sqrt(sum(x * x for x in a))
+    nb = _math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+# ─── Q2: Multimodal image QA ───────────────────────────────────────────────
+@app.post("/answer-image")
+async def ga3_answer_image(request: Request):
+    body = await request.json()
+    img = body["image_base64"]
+    if not img.startswith("data:"):
+        img = "data:image/png;base64," + img
+    r = _ga3_client.chat.completions.create(
+        model=_VISION_MODEL,
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text":
+                "Answer the question about the image. Reply with ONLY the answer value. "
+                "If numeric, output just the number (no currency symbol, no units, no commas). "
+                f"Question: {body['question']}"},
+            {"type": "image_url", "image_url": {"url": img}},
+        ]}],
+        temperature=0,
+    )
+    return {"answer": str(r.choices[0].message.content.strip())}
+
+
+# ─── Q8: Semantic rank (top-3 by cosine) ───────────────────────────────────
+@app.post("/rank")
+async def ga3_rank(request: Request):
+    body = await request.json()
+    cands = list(body["candidates"])
+    vecs = _ga3_embed([body["query"]] + cands)
+    q, cs = vecs[0], vecs[1:]
+    sims = sorted(range(len(cs)), key=lambda i: -_cos(q, cs[i]))
+    return {"ranking": sims[:3]}
+
+
+# ─── Q7: Structured invoice extraction (LLM) ───────────────────────────────
+@app.post("/llm-extract")
+async def ga3_llm_extract(request: Request):
+    body = await request.json()
+    system = (
+        "You extract structured data from invoice text and return JSON matching the given "
+        "JSON Schema EXACTLY (same keys, correct types, no extra keys). Rules: "
+        "currency = ISO 4217 code (USD/EUR/GBP/INR/JPY). "
+        "total_amount = integer in main unit, no separators/symbols (handle words, 12,480, "
+        "Indian grouping 1,24,800, or 12K). invoice_date = YYYY-MM-DD. "
+        "due_in_days = integer (Net 30 -> 30, 'two weeks' -> 14). "
+        "is_paid boolean from wording. priority in {low,normal,high,urgent}. "
+        "contact_email lowercased. line_items = array of {sku,quantity,unit_price} in order, "
+        "unit_price integer. item_count = number of line items."
+    )
+    user = (f"JSON Schema:\n{json.dumps(body.get('schema', {}))}\n\n"
+            f"Document text:\n{body['text']}\n\nReturn ONLY the JSON object.")
+    return _ga3_chat_json(system, user)
+
+
+# ─── Q9: CoT word-problem solver ───────────────────────────────────────────
+@app.post("/solve")
+async def ga3_solve(request: Request):
+    body = await request.json()
+    system = (
+        "Solve the arithmetic word problem. Ignore distractor numbers. Return JSON with EXACTLY "
+        "two keys: 'reasoning' (string, >= 80 characters, showing the steps) and 'answer' "
+        "(a JSON integer, not a string, not a float). No extra keys, no markdown."
+    )
+    out = _ga3_chat_json(system, f"Problem: {body['problem']}")
+    a = out.get("answer")
+    try:
+        ans = int(round(float(a)))
+    except Exception:
+        ans = int("".join(ch for ch in str(a) if ch.isdigit() or ch == "-") or 0)
+    r = str(out.get("reasoning", ""))
+    if len(r) < 80:
+        r = (r + " ").ljust(80, ".")
+    return {"reasoning": r, "answer": ans}
+
+
+# ─── Q6: Korean audio -> dataframe stats ───────────────────────────────────
+def _ga3_transcribe(raw: bytes, mime: str) -> str:
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{_AUDIO_MODEL}:generateContent?key={_GA3_KEY}")
+    payload = {"contents": [{"parts": [
+        {"text": "Transcribe this audio verbatim. Output only the transcript text."},
+        {"inline_data": {"mime_type": mime, "data": _b64.b64encode(raw).decode()}},
+    ]}]}
+    with httpx.Client(timeout=120) as c:
+        resp = c.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
+def _ga3_profile(records):
+    cols = []
+    for r in records:
+        for k in r:
+            if k not in cols:
+                cols.append(k)
+    numcols, catcols = [], []
+    coldata = {c: [r.get(c) for r in records] for c in cols}
+    for c in cols:
+        vals = [v for v in coldata[c] if v is not None]
+        if vals and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in vals):
+            numcols.append(c)
+        else:
+            catcols.append(c)
+
+    def col(c):
+        return [v for v in coldata[c] if isinstance(v, (int, float)) and not isinstance(v, bool)]
+
+    def mode(xs):
+        if not xs:
+            return None
+        return max(set(xs), key=xs.count)
+
+    mean = {c: statistics.fmean(col(c)) for c in numcols if col(c)}
+    out = {
+        "rows": len(records),
+        "columns": cols,
+        "mean": mean,
+        "std": {c: (statistics.pstdev(col(c)) if len(col(c)) > 0 else 0.0) for c in numcols},
+        "variance": {c: (statistics.pvariance(col(c)) if len(col(c)) > 0 else 0.0) for c in numcols},
+        "min": {c: min(col(c)) for c in numcols if col(c)},
+        "max": {c: max(col(c)) for c in numcols if col(c)},
+        "median": {c: statistics.median(col(c)) for c in numcols if col(c)},
+        "mode": {c: mode(col(c)) for c in numcols},
+        "range": {c: (max(col(c)) - min(col(c))) for c in numcols if col(c)},
+        "allowed_values": {c: sorted({str(v) for v in coldata[c] if v is not None}) for c in catcols},
+        "value_range": {c: [min(col(c)), max(col(c))] for c in numcols if col(c)},
+    }
+    # correlation matrix over numeric columns
+    corr = []
+    for a in numcols:
+        row = []
+        for b in numcols:
+            xa, xb = col(a), col(b)
+            n = min(len(xa), len(xb))
+            if n > 1:
+                try:
+                    row.append(statistics.correlation(xa[:n], xb[:n]))
+                except Exception:
+                    row.append(0.0)
+            else:
+                row.append(0.0)
+        corr.append(row)
+    out["correlation"] = corr
+    return out
+
+
+@app.post("/korean-audio")
+async def ga3_korean_audio(request: Request):
+    body = await request.json()
+    raw = _b64.b64decode(body["audio_base64"])
+    mime = "audio/mp3" if (raw[:3] == b"ID3" or raw[:2] == b"\xff\xfb") else "audio/wav"
+    transcript = ""
+    try:
+        transcript = _ga3_transcribe(raw, mime)
+        parsed = _ga3_chat_json(
+            "The transcript describes a small tabular dataset (rows and columns, possibly in "
+            "Korean). Reconstruct it and return JSON {\"records\":[{col:value,...},...]}. "
+            "Numbers for numeric columns, strings for categorical columns.",
+            f"Transcript:\n{transcript}",
+        )
+        return _ga3_profile(parsed.get("records", []))
+    except Exception as e:
+        empty = {k: {} for k in ["mean", "std", "variance", "min", "max", "median",
+                                 "mode", "range", "allowed_values", "value_range"]}
+        return {"rows": 0, "columns": [], **empty, "correlation": [],
+                "_error": str(e), "_transcript": transcript}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════
 

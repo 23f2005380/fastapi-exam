@@ -7,3 +7,17 @@ services:
     envVars:
       - key: PORT
         value: 8000
+      # TDS GA3 (LLM) — set GEMINI_API_KEY in the Render dashboard (do NOT commit it).
+      # Free key: https://aistudio.google.com/apikey
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai/
+      - key: CHAT_MODEL
+        value: gemini-flash-latest
+      - key: VISION_MODEL
+        value: gemini-flash-latest
+      - key: EMBED_MODEL
+        value: gemini-embedding-001
+      - key: GEMINI_AUDIO_MODEL
+        value: gemini-flash-latest
