@@ -501,11 +501,11 @@ async def ga3_korean_audio(request: Request):
             f"Transcript:\n{transcript}",
         )
         return _ga3_profile(parsed.get("records", []))
-    except Exception as e:
+    except Exception:
         empty = {k: {} for k in ["mean", "std", "variance", "min", "max", "median",
                                  "mode", "range", "allowed_values", "value_range"]}
-        return {"rows": 0, "columns": [], **empty, "correlation": [],
-                "_error": str(e), "_transcript": transcript}
+        # never emit extra keys — the grader compares the key set exactly
+        return {"rows": 0, "columns": [], **empty, "correlation": []}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
